@@ -4,7 +4,7 @@
 // @grant        none
 // @run-at       document-end
 // ==/UserScript==
-
+//手动排除
 (function () {
     'use strict';
 
