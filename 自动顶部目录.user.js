@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         网页顶部层级目录（按钮触发·容器感知·移动端）
+// @name         网页悬浮目录（按钮触发·容器感知·移动端）
 // @namespace    https://github.com/
-// @version      2.0.0
-// @description  在已有语义容器后插入目录按钮，点击后生成/切换层级目录
+// @version      3.0.0
+// @description  右下角悬浮按钮，点击展开/收起层级目录面板，完全脱离文档流
 // @match        *://*/*
 // @grant        none
 // @run-at       document-end
@@ -15,36 +15,25 @@
      * 0. 常量与全局状态
      * ============================================================ */
     const TOC_NS = 'gm-toc';
+    const TOC_ROOT_ID = `${TOC_NS}-root`;
     const TOC_BUTTON_ID = `${TOC_NS}-btn`;
     const TOC_PANEL_ID  = `${TOC_NS}-panel`;
 
-    /** @type {{
-     *   button: HTMLButtonElement | null,
-     *   panel: HTMLElement | null,
-     *   container: HTMLElement | null,
-     *   headings: HTMLElement[],
-     *   built: boolean,
-     *   visible: boolean,
-     *   scrollLock: boolean
-     * }}
-     */
     const state = {
+        root: null,
         button: null,
         panel: null,
         container: null,
         headings: [],
         built: false,
         visible: false,
-        scrollLock: false,
     };
 
     /* ============================================================
-     * 1. 容器探测 —— 优先级链 + 可见性校验
+     * 1. 容器探测
      * ============================================================ */
     const CONTAINER_SELECTORS = [
-        'main',
-        'article',
-        '[role="main"]',
+        'main', 'article', '[role="main"]',
         '.post', '.post-content', '.post-body',
         '.article', '.article-content', '.article-body',
         '.content', '.content-body',
@@ -52,114 +41,48 @@
         '.markdown-body', '.md-body',
     ];
 
-    /**
-     * 判断元素是否可见且有实际尺寸
-     * 多层兜底：rect → computedStyle → offsetParent → clientRects
-     * @param {HTMLElement} el
-     * @returns {boolean}
-     */
     function isVisible(el) {
         if (!el) return false;
-
-        // 最严格的检查：有实际渲染尺寸
         const rect = el.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
-            const style = window.getComputedStyle(el);
-            return (
-                style.display !== 'none' &&
-                style.visibility !== 'hidden' &&
-                style.opacity !== '0'
-            );
+            const s = window.getComputedStyle(el);
+            return s.display !== 'none' && s.visibility !== 'hidden' && s.opacity !== '0';
         }
-
-        // 兜底1：offsetParent 不为 null（说明在渲染树中且非 fixed 隐藏）
         if (el.offsetParent !== null) return true;
-
-        // 兜底2：getClientRects 有结果（处理 inline 元素）
-        const rects = el.getClientRects();
-        if (rects.length > 0) return true;
-
-        // 兜底3：SSR / 无头环境 —— 只要有文本内容就信任
+        if (el.getClientRects().length > 0) return true;
         if (el.textContent && el.textContent.trim().length > 0) {
-            const style = window.getComputedStyle(el);
-            return (
-                style.display !== 'none' &&
-                style.visibility !== 'hidden'
-            );
+            const s = window.getComputedStyle(el);
+            return s.display !== 'none' && s.visibility !== 'hidden';
         }
-
         return false;
     }
 
-    /**
-     * 找到最合适的挂载容器
-     * 策略：按选择器优先级遍历 → 退化到第一个可见 heading 的祖先链 → body
-     * @returns {HTMLElement | null}
-     */
     function findContainer() {
-        // 主策略：按优先级链找第一个可见的语义容器
         for (const sel of CONTAINER_SELECTORS) {
             const els = document.querySelectorAll(sel);
             for (const el of els) {
                 if (isVisible(el)) return el;
             }
         }
-
-        // 退化策略1：找第一个可见 heading 的祖先链中最近的语义标签
-        const SEMANTIC_TAGS = ['MAIN', 'ARTICLE', 'SECTION', 'DIV'];
-        const allHeadings = document.querySelectorAll(HEADING_SELECTOR);
-        for (const h of allHeadings) {
-            if (!isVisible(h)) continue;
-            let parent = h.parentElement;
-            while (parent && parent !== document.body) {
-                if (SEMANTIC_TAGS.includes(parent.tagName)) {
-                    // 验证该容器内有多个 heading（说明是正文区）
-                    const containerHeadings = parent.querySelectorAll(HEADING_SELECTOR);
-                    const visibleCount = Array.from(containerHeadings).filter(isVisible).length;
-                    if (visibleCount >= 2) return parent;
-                }
-                parent = parent.parentElement;
-            }
-            // 至少返回 h 的直接父元素
-            if (h.parentElement) return h.parentElement;
-            break;
-        }
-
-        // 最终退化：body
         return document.body;
     }
 
     /* ============================================================
-     * 2. Heading 采集 —— 去重 / 过滤 / 可见性
+     * 2. Heading 采集
      * ============================================================ */
     const HEADING_SELECTOR = 'h1, h2, h3, h4';
 
-    /**
-     * 判断 heading 是否值得收录
-     * @param {HTMLElement} h
-     * @returns {boolean}
-     */
     function isValidHeading(h) {
         const text = h.textContent.trim();
-        if (!text) return false;
-        if (text.length > 120) return false; // 排除异常长文本（如隐藏模板）
-        if (!isVisible(h)) return false;
-
-        // 排除自身 TOC 内部的 heading
-        if (h.closest(`#${TOC_PANEL_ID}`)) return false;
-
+        if (!text || text.length > 120 || !isVisible(h)) return false;
+        if (h.closest(`#${TOC_ROOT_ID}`)) return false;
         return true;
     }
 
-    /**
-     * 扫描并缓存 heading 列表
-     * @returns {HTMLElement[]}
-     */
     function collectHeadings() {
         const all = Array.from(document.querySelectorAll(HEADING_SELECTOR));
         const filtered = all.filter(isValidHeading);
 
-        // 确保唯一 id
         filtered.forEach((h, i) => {
             if (!h.id || document.querySelectorAll(`[id="${h.id}"]`).length > 1) {
                 let base = (h.textContent.trim().slice(0, 20) || 'heading')
@@ -182,33 +105,20 @@
     }
 
     /* ============================================================
-     * 3. 层级校正 —— 处理跳级 / 非规范结构
+     * 3. 层级校正 → 嵌套树
      * ============================================================ */
-
-    /**
-     * 将 heading 列表转为嵌套 ul 树
-     * 规则：level 只增 1 或重置，不允许跳级
-     * @param {HTMLElement[]} headings
-     * @returns {HTMLUListElement}
-     */
     function buildTree(headings) {
         const rootUl = document.createElement('ul');
         rootUl.className = `${TOC_NS}-list`;
         rootUl.setAttribute('data-level', '0');
 
-        // stack 存放 { ul, level }
         const stack = [{ ul: rootUl, level: 0 }];
 
         headings.forEach((h) => {
-            let level = parseInt(h.tagName[1], 10); // 1-4
-
-            // 层级校正：不允许跳级
+            let level = parseInt(h.tagName[1], 10);
             const top = stack[stack.length - 1];
-            if (level > top.level + 1) {
-                level = top.level + 1;
-            }
+            if (level > top.level + 1) level = top.level + 1;
 
-            // 弹出比当前 level 深的所有层
             while (stack.length > 1 && stack[stack.length - 1].level >= level) {
                 stack.pop();
             }
@@ -231,10 +141,7 @@
                 if (target) {
                     target.scrollIntoView({ behavior: 'smooth', block: 'start' });
                 }
-                // 移动端点击后自动收起
-                if (window.innerWidth < 768) {
-                    togglePanel(false);
-                }
+                if (window.innerWidth < 768) togglePanel(false);
             });
 
             li.appendChild(a);
@@ -245,7 +152,6 @@
             li.appendChild(childUl);
 
             parent.appendChild(li);
-
             stack.push({ ul: childUl, level });
         });
 
@@ -253,7 +159,7 @@
     }
 
     /* ============================================================
-     * 4. Panel 构建
+     * 4. Panel 构建（不在文档流中，挂在 root 下）
      * ============================================================ */
     function buildPanel() {
         const panel = document.createElement('nav');
@@ -270,24 +176,27 @@
     }
 
     /* ============================================================
-     * 5. Panel 显隐控制
+     * 5. Panel 显隐
      * ============================================================ */
     function togglePanel(force) {
-        if (!state.panel) return;
-
         const willShow = typeof force === 'boolean' ? force : !state.visible;
 
         if (willShow) {
-            state.panel.classList.add(`${TOC_NS}-panel--open`);
-            state.panel.setAttribute('aria-hidden', 'false');
+            if (state.panel && !state.panel.parentNode) {
+                state.root.appendChild(state.panel);
+            }
+            // 双 RAF 确保 DOM 插入后再加动画类
+            requestAnimationFrame(() => {
+                requestAnimationFrame(() => {
+                    state.panel?.classList.add(`${TOC_NS}-panel--open`);
+                });
+            });
+            state.panel?.setAttribute('aria-hidden', 'false');
             state.button?.setAttribute('aria-expanded', 'true');
-            // 可选：锁定 body 滚动
-            // document.body.style.overflow = 'hidden';
         } else {
-            state.panel.classList.remove(`${TOC_NS}-panel--open`);
-            state.panel.setAttribute('aria-hidden', 'true');
+            state.panel?.classList.remove(`${TOC_NS}-panel--open`);
+            state.panel?.setAttribute('aria-hidden', 'true');
             state.button?.setAttribute('aria-expanded', 'false');
-            // document.body.style.overflow = '';
         }
 
         state.visible = willShow;
@@ -303,33 +212,31 @@
         btn.className = `${TOC_NS}-btn`;
         btn.setAttribute('aria-expanded', 'false');
         btn.setAttribute('aria-controls', TOC_PANEL_ID);
+        btn.title = '目录';
 
-        const icon = document.createElement('span');
-        icon.className = `${TOC_NS}-icon`;
-        icon.textContent = '📑';
-
-        const label = document.createElement('span');
-        label.className = `${TOC_NS}-label`;
-        label.textContent = '目录';
-
-        btn.appendChild(icon);
-        btn.appendChild(label);
+        // 用 SVG 图标，不依赖 emoji 字体
+        btn.innerHTML = `
+            <svg class="${TOC_NS}-btn-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <line x1="8" y1="6" x2="21" y2="6"></line>
+                <line x1="8" y1="12" x2="21" y2="12"></line>
+                <line x1="8" y1="18" x2="21" y2="18"></line>
+                <line x1="3" y1="6" x2="3.01" y2="6"></line>
+                <line x1="3" y1="12" x2="3.01" y2="12"></line>
+                <line x1="3" y1="18" x2="3.01" y2="18"></line>
+            </svg>
+        `;
 
         btn.addEventListener('click', () => {
             if (!state.built) {
-                // 首次点击：采集 + 构建 + 插入
                 const headings = collectHeadings();
                 if (headings.length < 2) {
-                    label.textContent = '无目录';
-                    btn.disabled = true;
+                    btn.classList.add(`${TOC_NS}-btn--disabled`);
+                    btn.title = '当前页面无可用目录';
                     return;
                 }
-                const panel = buildPanel();
-                // 插入到按钮之后（相邻兄弟）
-                btn.parentNode?.insertBefore(panel, btn.nextSibling);
+                buildPanel();
             }
             togglePanel();
-            label.textContent = state.visible ? '收起' : '目录';
         });
 
         state.button = btn;
@@ -337,7 +244,7 @@
     }
 
     /* ============================================================
-     * 7. 样式注入 —— 隔离 + 响应式 + 暗色模式
+     * 7. 样式注入 —— 全部 fixed 定位，彻底脱离文档流
      * ============================================================ */
     const STYLE_ID = `${TOC_NS}-style`;
 
@@ -345,169 +252,198 @@
         if (document.getElementById(STYLE_ID)) return;
 
         const css = `
-.${TOC_NS}-btn {
-    display: inline-flex;
-    align-items: center;
-    gap: 6px;
-    padding: 8px 16px;
-    margin: 12px 0;
-    border: 1px solid #d0d5dd;
-    border-radius: 999px;
-    background: #ffffff;
-    color: #344054;
-    font-size: 14px;
+/* ---- Reset 隔离：所有样式 scoped 到 #gm-toc-root ---- */
+#${TOC_ROOT_ID} {
+    all: initial;
+    position: fixed;
+    z-index: 2147483640;
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    line-height: 1.4;
-    cursor: pointer;
-    user-select: none;
-    -webkit-tap-highlight-color: transparent;
-    transition: background 0.2s, box-shadow 0.2s;
-    box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-}
-.${TOC_NS}-btn:hover {
-    background: #f9fafb;
-}
-.${TOC_NS}-btn:active {
-    background: #f2f4f7;
-}
-.${TOC_NS}-btn:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-}
-.${TOC_NS}-icon {
-    font-size: 16px;
-    line-height: 1;
-}
-.${TOC_NS}-label {
-    white-space: nowrap;
 }
 
-.${TOC_NS}-panel {
-    display: none;
-    background: #f9fafb;
-    color: #1d2939;
-    font-size: 14px;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    line-height: 1.7;
-    padding: 14px 16px;
-    margin: 8px 0 16px;
-    border: 1px solid #e4e7ec;
-    border-radius: 8px;
-    max-height: 70vh;
-    overflow-y: auto;
-    -webkit-overflow-scrolling: touch;
-    scroll-margin-top: 16px;
+/* ---- 按钮：右下角悬浮圆形 ---- */
+#${TOC_ROOT_ID} .${TOC_NS}-btn {
+    all: initial;
+    position: fixed !important;
+    right: 20px !important;
+    bottom: 20px !important;
+    z-index: 2147483641 !important;
+    width: 48px !important;
+    height: 48px !important;
+    border-radius: 50% !important;
+    border: none !important;
+    background: #4f46e5 !important;
+    color: #ffffff !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    box-shadow: 0 4px 12px rgba(79, 70, 229, 0.4), 0 2px 4px rgba(0,0,0,0.15) !important;
+    transition: transform 0.2s ease, box-shadow 0.2s ease, background 0.2s ease !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    font-size: 0 !important;
+    line-height: 1 !important;
+    -webkit-tap-highlight-color: transparent !important;
 }
-.${TOC_NS}-panel--open {
-    display: block;
+#${TOC_ROOT_ID} .${TOC_NS}-btn:hover {
+    background: #4338ca !important;
+    transform: scale(1.08) !important;
+    box-shadow: 0 6px 20px rgba(79, 70, 229, 0.5), 0 2px 6px rgba(0,0,0,0.2) !important;
 }
-
-.${TOC_NS}-panel .${TOC_NS}-list {
-    list-style: none;
-    padding-left: 0;
-    margin: 0;
+#${TOC_ROOT_ID} .${TOC_NS}-btn:active {
+    transform: scale(0.95) !important;
 }
-.${TOC_NS}-panel .${TOC_NS}-list .${TOC_NS}-list {
-    padding-left: 16px;
-    margin-top: 2px;
-    border-left: 2px solid #e4e7ec;
-    margin-left: 4px;
+#${TOC_ROOT_ID} .${TOC_NS}-btn--disabled {
+    background: #9ca3af !important;
+    cursor: not-allowed !important;
+    box-shadow: none !important;
 }
-
-.${TOC_NS}-panel .${TOC_NS}-item {
-    margin: 0;
-    padding: 0;
-}
-
-.${TOC_NS}-panel .${TOC_NS}-link {
-    display: block;
-    padding: 4px 8px;
-    color: #475467;
-    text-decoration: none;
-    border-radius: 4px;
-    transition: background 0.15s, color 0.15s;
-    word-break: break-word;
-}
-.${TOC_NS}-panel .${TOC_NS}-link:hover,
-.${TOC_NS}-panel .${TOC_NS}-link:focus {
-    background: #eef2ff;
-    color: #3538cd;
-    outline: none;
-}
-.${TOC_NS}-panel .${TOC_NS}-link:active {
-    background: #e0e7ff;
+#${TOC_ROOT_ID} .${TOC_NS}-btn-icon {
+    width: 22px !important;
+    height: 22px !important;
+    flex-shrink: 0 !important;
 }
 
-/* 层级缩进视觉增强 */
-.${TOC_NS}-panel .${TOC_NS}-item[data-level="1"] > .${TOC_NS}-link {
-    font-weight: 600;
-    color: #1d2939;
+/* ---- 面板：按钮上方弹出 ---- */
+#${TOC_ROOT_ID} .${TOC_NS}-panel {
+    all: initial;
+    position: fixed !important;
+    right: 20px !important;
+    bottom: 80px !important;
+    z-index: 2147483641 !important;
+    width: 320px !important;
+    max-height: 60vh !important;
+    overflow-y: auto !important;
+    background: #ffffff !important;
+    color: #1d2939 !important;
+    font-size: 14px !important;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif !important;
+    line-height: 1.7 !important;
+    padding: 16px 18px !important;
+    margin: 0 !important;
+    border: 1px solid #e4e7ec !important;
+    border-radius: 12px !important;
+    box-shadow: 0 10px 40px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.08) !important;
+    -webkit-overflow-scrolling: touch !important;
+    opacity: 0 !important;
+    transform: translateY(12px) scale(0.96) !important;
+    pointer-events: none !important;
+    transition: opacity 0.22s ease, transform 0.22s ease !important;
+    display: block !important;
+    visibility: visible !important;
 }
-.${TOC_NS}-panel .${TOC_NS}-item[data-level="2"] > .${TOC_NS}-link {
-    font-weight: 500;
-}
-.${TOC_NS}-panel .${TOC_NS}-item[data-level="3"] > .${TOC_NS}-link,
-.${TOC_NS}-panel .${TOC_NS}-item[data-level="4"] > .${TOC_NS}-link {
-    font-size: 13px;
-    color: #667085;
+#${TOC_ROOT_ID} .${TOC_NS}-panel--open {
+    opacity: 1 !important;
+    transform: translateY(0) scale(1) !important;
+    pointer-events: auto !important;
 }
 
-/* 暗色模式适配 */
+/* ---- 目录列表 ---- */
+#${TOC_ROOT_ID} .${TOC_NS}-list {
+    list-style: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+}
+#${TOC_ROOT_ID} .${TOC_NS}-list .${TOC_NS}-list {
+    padding-left: 14px !important;
+    margin-top: 2px !important;
+    border-left: 2px solid #e4e7ec !important;
+    margin-left: 4px !important;
+}
+#${TOC_ROOT_ID} .${TOC_NS}-item {
+    margin: 0 !important;
+    padding: 0 !important;
+}
+#${TOC_ROOT_ID} .${TOC_NS}-link {
+    display: block !important;
+    padding: 4px 8px !important;
+    color: #475467 !important;
+    text-decoration: none !important;
+    border-radius: 4px !important;
+    transition: background 0.15s, color 0.15s !important;
+    word-break: break-word !important;
+    font-size: 13px !important;
+}
+#${TOC_ROOT_ID} .${TOC_NS}-link:hover,
+#${TOC_ROOT_ID} .${TOC_NS}-link:focus {
+    background: #eef2ff !important;
+    color: #3538cd !important;
+    outline: none !important;
+}
+
+/* 层级视觉 */
+#${TOC_ROOT_ID} .${TOC_NS}-item[data-level="1"] > .${TOC_NS}-link {
+    font-weight: 600 !important;
+    color: #1d2939 !important;
+    font-size: 14px !important;
+}
+#${TOC_ROOT_ID} .${TOC_NS}-item[data-level="2"] > .${TOC_NS}-link {
+    font-weight: 500 !important;
+}
+#${TOC_ROOT_ID} .${TOC_NS}-item[data-level="3"] > .${TOC_NS}-link,
+#${TOC_ROOT_ID} .${TOC_NS}-item[data-level="4"] > .${TOC_NS}-link {
+    font-size: 12.5px !important;
+    color: #667085 !important;
+}
+
+/* ---- 暗色模式 ---- */
 @media (prefers-color-scheme: dark) {
-    .${TOC_NS}-btn {
-        background: #1d2939;
-        color: #e4e7ec;
-        border-color: #344054;
-        box-shadow: 0 1px 2px rgba(0,0,0,0.3);
+    #${TOC_ROOT_ID} .${TOC_NS}-btn {
+        background: #6366f1 !important;
     }
-    .${TOC_NS}-btn:hover { background: #2a3a50; }
-    .${TOC_NS}-btn:active { background: #334155; }
-
-    .${TOC_NS}-panel {
-        background: #111827;
-        color: #e4e7ec;
-        border-color: #344054;
+    #${TOC_ROOT_ID} .${TOC_NS}-btn:hover {
+        background: #818cf8 !important;
     }
-    .${TOC_NS}-panel .${TOC_NS}-list .${TOC_NS}-list {
-        border-left-color: #344054;
+    #${TOC_ROOT_ID} .${TOC_NS}-panel {
+        background: #1e293b !important;
+        color: #e2e8f0 !important;
+        border-color: #334155 !important;
+        box-shadow: 0 10px 40px rgba(0,0,0,0.5), 0 2px 8px rgba(0,0,0,0.3) !important;
     }
-    .${TOC_NS}-panel .${TOC_NS}-link {
-        color: #98a2b3;
+    #${TOC_ROOT_ID} .${TOC_NS}-list .${TOC_NS}-list {
+        border-left-color: #334155 !important;
     }
-    .${TOC_NS}-panel .${TOC_NS}-link:hover,
-    .${TOC_NS}-panel .${TOC_NS}-link:focus {
-        background: #312e81;
-        color: #c7d2fe;
+    #${TOC_ROOT_ID} .${TOC_NS}-link {
+        color: #94a3b8 !important;
     }
-    .${TOC_NS}-panel .${TOC_NS}-item[data-level="1"] > .${TOC_NS}-link {
-        color: #f3f4f6;
+    #${TOC_ROOT_ID} .${TOC_NS}-link:hover,
+    #${TOC_NS}-link:focus {
+        background: #312e81 !important;
+        color: #c7d2fe !important;
     }
-    .${TOC_NS}-panel .${TOC_NS}-item[data-level="3"] > .${TOC_NS}-link,
-    .${TOC_NS}-panel .${TOC_NS}-item[data-level="4"] > .${TOC_NS}-link {
-        color: #667085;
+    #${TOC_ROOT_ID} .${TOC_NS}-item[data-level="1"] > .${TOC_NS}-link {
+        color: #f1f5f9 !important;
+    }
+    #${TOC_ROOT_ID} .${TOC_NS}-item[data-level="3"] > .${TOC_NS}-link,
+    #${TOC_ROOT_ID} .${TOC_NS}-item[data-level="4"] > .${TOC_NS}-link {
+        color: #64748b !important;
     }
 }
 
-/* 移动端微调 */
+/* ---- 移动端 ---- */
 @media (max-width: 767px) {
-    .${TOC_NS}-btn {
-        padding: 10px 18px;
-        font-size: 15px;
+    #${TOC_ROOT_ID} .${TOC_NS}-btn {
+        right: 14px !important;
+        bottom: 14px !important;
+        width: 44px !important;
+        height: 44px !important;
     }
-    .${TOC_NS}-panel {
-        font-size: 15px;
-        padding: 12px 14px;
-        max-height: 60vh;
+    #${TOC_ROOT_ID} .${TOC_NS}-btn-icon {
+        width: 20px !important;
+        height: 20px !important;
     }
-    .${TOC_NS}-panel .${TOC_NS}-list .${TOC_NS}-list {
-        padding-left: 12px;
+    #${TOC_ROOT_ID} .${TOC_NS}-panel {
+        right: 8px !important;
+        left: 8px !important;
+        bottom: 68px !important;
+        width: auto !important;
+        max-height: 55vh !important;
+        font-size: 15px !important;
+        padding: 14px 16px !important;
     }
 }
 
-/* 目标锚点偏移 —— 防止被浏览器地址栏/固定栏遮挡 */
-.${TOC_NS}-panel .${TOC_NS}-link[href] {
-    scroll-margin-top: 16px;
-}
+/* ---- 滚动锚点偏移 ---- */
 h1[id], h2[id], h3[id], h4[id] {
     scroll-margin-top: 20px;
 }
@@ -521,24 +457,26 @@ h1[id], h2[id], h3[id], h4[id] {
     }
 
     /* ============================================================
-     * 8. 初始化 & 异步重试
+     * 8. 初始化
      * ============================================================ */
     function init() {
-        // 防止重复注入
-        if (document.getElementById(TOC_BUTTON_ID)) return;
+        if (document.getElementById(TOC_ROOT_ID)) return;
 
         injectStyles();
 
-        const container = findContainer();
-        if (!container) return;
-
-        state.container = container;
+        // 创建根容器 —— 唯一挂到 body 的节点
+        const root = document.createElement('div');
+        root.id = TOC_ROOT_ID;
+        root.setAttribute('aria-hidden', 'true');
 
         const btn = buildButton();
+        root.appendChild(btn);
 
-        // 插入策略：作为容器的第一个子元素之前
-        // 按钮排在容器前面（自然文档流，不悬浮、不遮挡）
-        container.insertBefore(btn, container.firstChild);
+        document.body.appendChild(root);
+        state.root = root;
+
+        // 采集容器信息（仅用于判断页面是否有正文）
+        state.container = findContainer();
 
         // 暴露调试接口
         window.__TOC__ = {
@@ -550,65 +488,66 @@ h1[id], h2[id], h3[id], h4[id] {
                 state.panel?.remove();
                 state.panel = null;
                 collectHeadings();
-                const panel = buildPanel();
-                state.button?.parentNode?.insertBefore(panel, state.button.nextSibling);
+                buildPanel();
+                if (state.visible) {
+                    state.root.appendChild(state.panel);
+                    requestAnimationFrame(() => {
+                        state.panel?.classList.add(`${TOC_NS}-panel--open`);
+                    });
+                }
             },
         };
     }
 
-    // ---------- 启动策略 ----------
+    /* ============================================================
+     * 9. 启动 + SPA 监听
+     * ============================================================ */
     let retry = 0;
     const MAX_RETRY = 20;
     const RETRY_INTERVAL = 300;
 
     function tryInit() {
-        // 至少需要有一些正文内容
         const hasContent = document.body && document.body.children.length > 0;
-
         if (!hasContent && retry < MAX_RETRY) {
             retry++;
             setTimeout(tryInit, RETRY_INTERVAL);
             return;
         }
-
         init();
-
-        // 如果初次没找到容器（SPA 异步渲染），继续观察
-        if (!state.container && retry < MAX_RETRY * 2) {
+        if (!state.root && retry < MAX_RETRY * 2) {
             retry++;
             setTimeout(tryInit, RETRY_INTERVAL);
         }
     }
 
-    // 延迟启动，避免阻塞首屏
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', () => setTimeout(tryInit, 100));
     } else {
         setTimeout(tryInit, 100);
     }
 
-    // ---------- SPA 路由变化监听 ----------
+    // SPA 路由变化 → 重置
     let lastUrl = location.href;
     const observer = new MutationObserver(() => {
         if (location.href !== lastUrl) {
             lastUrl = location.href;
-            // 重置状态
             state.built = false;
             state.visible = false;
             state.headings = [];
             state.panel?.remove();
             state.panel = null;
-            state.button?.remove();
-            state.button = null;
             state.container = null;
             retry = 0;
             tryInit();
         }
     });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
 
-    observer.observe(document.documentElement, {
-        childList: true,
-        subtree: true,
-    });
+    // 点击页面其他区域关闭面板
+    document.addEventListener('click', (e) => {
+        if (!state.visible || !state.root) return;
+        if (e.target.closest(`#${TOC_ROOT_ID}`)) return;
+        togglePanel(false);
+    }, true);
 
 })();
