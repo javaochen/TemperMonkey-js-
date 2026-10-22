@@ -1,11 +1,16 @@
 // ==UserScript==
 // @name         网页悬浮目录（按钮可移动·容器感知·移动端）
 // @namespace    https://github.com/
-// @version      4.0.0
+// @version      4.1.0
 // @description  右下角悬浮按钮，点击展开层级目录面板；按钮可拖拽或点选放置到屏幕任意位置，位置自动记忆、可一键复位
+// @homepageURL  https://github.com/javaochen/js.Tampermonkey
+// @supportURL   https://github.com/javaochen/js.Tampermonkey/issues
+// @downloadURL  https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/toc.user.js
+// @updateURL    https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/toc.user.js
 // @match        *://*/*
 // @grant        none
 // @run-at       document-end
+// @noframes
 // ==/UserScript==
 
 (function () {

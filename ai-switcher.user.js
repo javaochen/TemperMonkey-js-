@@ -1,9 +1,13 @@
 // ==UserScript==
 // @name         AI Switcher · 多厂家 AI 一键切换栏
 // @namespace    https://github.com/ai-switcher
-// @version      1.4.0
+// @version      1.4.1
 // @description  在 AI 聊天页面显示可拖动、可排序的多厂家 AI 快捷图标，点击即在当前标签页切换到该 AI（Ctrl/中键则新标签打开）。支持自定义厂家、快捷键、位置记忆。已兼容 Trusted Types / 严格 CSP（ChatGPT、Gemini 等）。
-// @author       you
+// @author       javaochen
+// @homepageURL  https://github.com/javaochen/js.Tampermonkey
+// @supportURL   https://github.com/javaochen/js.Tampermonkey/issues
+// @downloadURL  https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/ai-switcher.user.js
+// @updateURL    https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/ai-switcher.user.js
 // @match        https://chatgpt.com/*
 // @match        https://chat.openai.com/*
 // @match        https://claude.ai/*

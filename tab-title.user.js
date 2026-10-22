@@ -1,12 +1,16 @@
 // ==UserScript==
 // @name         最新问题→标签页标题
 // @namespace    http://tampermonkey.net/
-// @version      1.0
+// @version      1.0.1
 // @description  在 chatMode=temp 的 AI 对话界面，把用户最新问题提取为页面标题
+// @homepageURL  https://github.com/javaochen/js.Tampermonkey
+// @supportURL   https://github.com/javaochen/js.Tampermonkey/issues
+// @downloadURL  https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/tab-title.user.js
+// @updateURL    https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/tab-title.user.js
 // @match        *://yuanbao.tencent.com/*chatMode=temp*
-// @match        *://your-ai-site.com/*
 // @grant        none
 // @run-at       document-idle
+// @noframes
 // ==/UserScript==
 
 (function () {
