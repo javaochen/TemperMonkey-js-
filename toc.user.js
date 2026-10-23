@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网页悬浮目录（按钮可移动·容器感知·移动端）
 // @namespace    https://github.com/
-// @version      4.2.0
+// @version      4.3.0
 // @description  右下角悬浮按钮，点击展开层级目录面板；按钮可拖拽或点选放置到屏幕任意位置，位置自动记忆、可一键复位
 // @homepageURL  https://github.com/javaochen/js.Tampermonkey
 // @supportURL   https://github.com/javaochen/js.Tampermonkey/issues
@@ -504,16 +504,25 @@
             if (suppressClick) return;          // 刚刚是拖动，不触发展开
             if (e.detail >= 2) { resetPos(); return; } // 双击 → 复位
 
-            if (!state.built) {
-                const headings = collectHeadings();
-                if (headings.length < 2) {
-                    btn.classList.add(`${TOC_NS}-btn--disabled`);
-                    btn.title = '当前页面无可用目录';
-                    return;
-                }
-                buildPanel();
+            // 已经展开时只负责收起，不重复采集
+            if (state.visible) { togglePanel(false); return; }
+
+            // 每次展开都重新采集：兼容动态加载、无限滚动和 SPA 页面
+            const headings = collectHeadings();
+            if (headings.length < 2) {
+                if (state.panel) { state.panel.remove(); state.panel = null; }
+                state.built = false;
+                btn.classList.add(`${TOC_NS}-btn--disabled`);
+                btn.title = '当前页面无可用目录';
+                return;
             }
-            togglePanel();
+
+            btn.classList.remove(`${TOC_NS}-btn--disabled`);
+            btn.title = '目录（拖动可移动位置，双击复位）';
+            if (state.panel) { state.panel.remove(); state.panel = null; }
+            state.built = false;
+            buildPanel();
+            togglePanel(true);
         });
 
         // 拖动结束后抑制紧随其后的 click，避免误展开面板
@@ -1055,5 +1064,12 @@ h1[id], h2[id], h3[id], h4[id] {
         if (e.target.closest && e.target.closest(`#${TOC_ROOT_ID}`)) return;
         togglePanel(false);
     }, true);
+
+    // Esc 关闭面板
+    document.addEventListener('keydown', (e) => {
+        if (e.key !== 'Escape' || !state.visible) return;
+        e.preventDefault();
+        togglePanel(false);
+    });
 
 })();
