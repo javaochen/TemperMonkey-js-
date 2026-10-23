@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网页悬浮目录（按钮可移动·容器感知·移动端）
 // @namespace    https://github.com/
-// @version      4.1.0
+// @version      4.2.0
 // @description  右下角悬浮按钮，点击展开层级目录面板；按钮可拖拽或点选放置到屏幕任意位置，位置自动记忆、可一键复位
 // @homepageURL  https://github.com/javaochen/js.Tampermonkey
 // @supportURL   https://github.com/javaochen/js.Tampermonkey/issues
@@ -29,6 +29,14 @@
     const DRAG_THRESHOLD = 5;                  // 超过该像素才算拖动（否则视为点击）
     const GAP = 12;                            // 面板与按钮间距
     const HAS_POINTER = 'PointerEvent' in window;
+
+    /** 创建元素（避免 innerHTML，兼容 Trusted Types） */
+    function el(tag, cls, text) {
+        const node = document.createElement(tag);
+        if (cls) node.className = cls;
+        if (text !== undefined && text !== null) node.textContent = String(text);
+        return node;
+    }
 
     const state = {
         root: null,
@@ -106,7 +114,8 @@
         const filtered = all.filter(isValidHeading);
 
         filtered.forEach((h, i) => {
-            if (!h.id || document.querySelectorAll(`[id="${h.id}"]`).length > 1) {
+            // getElementById 返回第一个匹配项：不是自己就说明 id 重复
+            if (!h.id || document.getElementById(h.id) !== h) {
                 const base = safeIdOf(h);
                 let candidate = `${base}-${i}`;
                 let n = 0;
@@ -399,9 +408,10 @@
         const ov = document.createElement('div');
         ov.className = `${TOC_NS}-placer`;
 
-        const tip = document.createElement('div');
-        tip.className = `${TOC_NS}-placer-tip`;
-        tip.innerHTML = '点击页面任意位置，把目录按钮放到这里<br><span>按 Esc 取消</span>';
+        const tip = el('div', `${TOC_NS}-placer-tip`);
+        tip.appendChild(document.createTextNode('点击页面任意位置，把目录按钮放到这里'));
+        tip.appendChild(document.createElement('br'));
+        tip.appendChild(el('span', null, '按 Esc 取消'));
 
         const ghost = document.createElement('div');
         ghost.className = `${TOC_NS}-ghost`;
@@ -459,16 +469,34 @@
         btn.setAttribute('aria-controls', TOC_PANEL_ID);
         btn.title = '目录（拖动可移动位置，双击复位）';
 
-        btn.innerHTML = `
-            <svg class="${TOC_NS}-btn-icon" viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <line x1="8" y1="6" x2="21" y2="6"></line>
-                <line x1="8" y1="12" x2="21" y2="12"></line>
-                <line x1="8" y1="18" x2="21" y2="18"></line>
-                <line x1="3" y1="6" x2="3.01" y2="6"></line>
-                <line x1="3" y1="12" x2="3.01" y2="12"></line>
-                <line x1="3" y1="18" x2="3.01" y2="18"></line>
-            </svg>
-        `;
+        // 用 DOM API 构造 SVG：不触发 Trusted Types，也不依赖 emoji 字体
+        const SVG_NS = 'http://www.w3.org/2000/svg';
+        const svg = document.createElementNS(SVG_NS, 'svg');
+        svg.setAttribute('class', `${TOC_NS}-btn-icon`);
+        svg.setAttribute('viewBox', '0 0 24 24');
+        svg.setAttribute('width', '20');
+        svg.setAttribute('height', '20');
+        svg.setAttribute('fill', 'none');
+        svg.setAttribute('stroke', 'currentColor');
+        svg.setAttribute('stroke-width', '2');
+        svg.setAttribute('stroke-linecap', 'round');
+        svg.setAttribute('stroke-linejoin', 'round');
+        [
+            [8, 6, 21, 6],
+            [8, 12, 21, 12],
+            [8, 18, 21, 18],
+            [3, 6, 3.01, 6],
+            [3, 12, 3.01, 12],
+            [3, 18, 3.01, 18],
+        ].forEach(([x1, y1, x2, y2]) => {
+            const line = document.createElementNS(SVG_NS, 'line');
+            line.setAttribute('x1', String(x1));
+            line.setAttribute('y1', String(y1));
+            line.setAttribute('x2', String(x2));
+            line.setAttribute('y2', String(y2));
+            svg.appendChild(line);
+        });
+        btn.appendChild(svg);
 
         let suppressClick = false;
 
@@ -569,9 +597,10 @@
      * 10. 样式注入 —— 全部 fixed 定位，彻底脱离文档流
      * ============================================================ */
     const STYLE_ID = `${TOC_NS}-style`;
+    let styleMode = 'none';
 
     function injectStyles() {
-        if (document.getElementById(STYLE_ID)) return;
+        if (styleMode !== 'none') return;
 
         const css = `
 /* ---- 根容器：样式隔离 ---- */
@@ -867,11 +896,23 @@ h1[id], h2[id], h3[id], h4[id] {
 }
         `.trim();
 
+        // constructed stylesheet 不受页面 CSP 的 inline-style 限制
+        try {
+            if (typeof CSSStyleSheet === 'function' && 'adoptedStyleSheets' in Document.prototype) {
+                const sheet = new CSSStyleSheet();
+                sheet.replaceSync(css);
+                document.adoptedStyleSheets = [...document.adoptedStyleSheets, sheet];
+                styleMode = 'adopted';
+                return;
+            }
+        } catch (e) { /* 浏览器不支持或被拦截，继续降级 */ }
+
         const style = document.createElement('style');
         style.id = STYLE_ID;
         style.setAttribute('data-namespace', TOC_NS);
         style.textContent = css;
-        document.head.appendChild(style);
+        (document.head || document.documentElement).appendChild(style);
+        styleMode = 'style';
     }
 
     /* ============================================================
@@ -963,22 +1004,50 @@ h1[id], h2[id], h3[id], h4[id] {
         setTimeout(tryInit, 100);
     }
 
-    // SPA 路由变化 → 重置目录（保留按钮位置）
+    // SPA 路由变化 → 重置目录（保留按钮与位置）
     let lastUrl = location.href;
-    const observer = new MutationObserver(() => {
-        if (location.href !== lastUrl) {
-            lastUrl = location.href;
-            state.built = false;
-            state.visible = false;
-            state.headings = [];
-            state.panel && state.panel.remove();
-            state.panel = null;
-            state.container = null;
-            retry = 0;
-            tryInit();
+
+    function resetForSpa() {
+        if (state.placer) exitPlacer();
+        state.built = false;
+        state.visible = false;
+        state.headings = [];
+        if (state.panel) { state.panel.remove(); state.panel = null; }
+        if (state.button) {
+            state.button.setAttribute('aria-expanded', 'false');
+            state.button.classList.remove(`${TOC_NS}-btn--active`);
         }
-    });
-    observer.observe(document.documentElement, { childList: true, subtree: true });
+        state.container = findContainer();
+    }
+
+    function onNavigate() {
+        if (location.href === lastUrl) return;
+        lastUrl = location.href;
+        resetForSpa();
+    }
+
+    // 用 history 钩子代替全文档 MutationObserver：只在真正换页时触发
+    const HISTORY_HOOK = `__${TOC_NS}_history_hook`;
+    const HISTORY_PATCHED = `__${TOC_NS}_history_patched`;
+    history[HISTORY_HOOK] = onNavigate;   // 始终指向当前实例
+    if (!history[HISTORY_PATCHED]) {
+        history[HISTORY_PATCHED] = true;
+        ['pushState', 'replaceState'].forEach((method) => {
+            const original = history[method];
+            history[method] = function (...args) {
+                const result = original.apply(this, args);
+                queueMicrotask(() => {
+                    const hook = history[HISTORY_HOOK];
+                    if (typeof hook === 'function') hook();
+                });
+                return result;
+            };
+        });
+    }
+    window.addEventListener('popstate', onNavigate);
+    if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+        window.navigation.addEventListener('navigatesuccess', onNavigate);
+    }
 
     // 点击页面其他区域关闭面板
     document.addEventListener('click', (e) => {
