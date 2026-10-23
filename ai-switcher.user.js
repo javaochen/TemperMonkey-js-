@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Switcher · 多厂家 AI 一键切换栏
 // @namespace    https://github.com/ai-switcher
-// @version      1.4.1
+// @version      1.4.2
 // @description  在 AI 聊天页面显示可拖动、可排序的多厂家 AI 快捷图标，点击即在当前标签页切换到该 AI（Ctrl/中键则新标签打开）。支持自定义厂家、快捷键、位置记忆。已兼容 Trusted Types / 严格 CSP（ChatGPT、Gemini 等）。
 // @author       javaochen
 // @homepageURL  https://github.com/javaochen/js.Tampermonkey
@@ -642,18 +642,20 @@
       render();
       return;
     }
-    if (e.key === '[' || e.key === ']') {
+    if (e.code === 'BracketLeft' || e.code === 'BracketRight') {
       if (!vis.length) return;
       const idx = vis.findIndex(isCurrent);
-      const next = idx < 0 ? 0 : (idx + (e.key === ']' ? 1 : -1) + vis.length) % vis.length;
+      const dir = e.code === 'BracketRight' ? 1 : -1;
+      const next = idx < 0 ? 0 : (idx + dir + vis.length) % vis.length;
       e.preventDefault();
       go(vis[next], false);
       return;
     }
-    const n = parseInt(e.key, 10);
-    if (n >= 1 && n <= 9 && vis[n - 1]) {
+    // 用 e.code 而不是 e.key：macOS 上 Option+1 的 key 是 '¡'、Option+[ 是 '“'
+    const digit = /^Digit([1-9])$/.exec(e.code);
+    if (digit && vis[Number(digit[1]) - 1]) {
       e.preventDefault();
-      go(vis[n - 1], false);
+      go(vis[Number(digit[1]) - 1], false);
     }
   }, true);
 
