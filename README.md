@@ -4,9 +4,9 @@
 
 | 脚本 | 安装 | 版本 | 适用站点 |
 |---|---|---|---|
-| 网页悬浮目录 | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/toc.user.js) | 4.1.0 | 所有网页 |
-| AI Switcher | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/ai-switcher.user.js) | 1.4.1 | ChatGPT、Claude、Gemini、DeepSeek、元宝、豆包、Kimi、千问、Qwen、ChatGLM、Grok、讯飞星火、Copilot、秘塔 |
-| 最新问题→标签页标题 | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/tab-title.user.js) | 1.0.1 | 元宝 `chatMode=temp` 对话页 |
+| 网页悬浮目录 | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/toc.user.js) | 4.2.0 | 所有网页 |
+| AI Switcher | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/ai-switcher.user.js) | 1.4.2 | ChatGPT、Claude、Gemini、DeepSeek、元宝、豆包、Kimi、千问、Qwen、ChatGLM、Grok、讯飞星火、Copilot、秘塔 |
+| 最新问题→标签页标题 | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/tab-title.user.js) | 1.1.0 | 元宝 `chatMode=temp` 对话页 |
 
 ## 功能速览
 
@@ -27,8 +27,9 @@
 
 ## 已知限制
 
-- 目录脚本注入所有站点（`@match *://*/*`）。严格 CSP 站点（如 ChatGPT、Gemini）上的样式注入与按钮位置功能尚未适配，留给后续版本。
+- 目录脚本注入所有站点（`@match *://*/*`）。样式优先使用 constructed stylesheet，浏览器不支持或被拦截时才回退到 `<style>`；两种路径都不依赖 `innerHTML`，因此兼容 Trusted Types。
 - 标题脚本目前只适配元宝的 `chatMode=temp` 页面，且依赖站点的用户消息选择器；站点改版后需要更新选择器。
+- 标题脚本使用 `@include` 而不是 `@match` 匹配 `chatMode=temp`，因为 Chrome 风格的 match 模式不匹配查询串。
 - `raw` 主分支链接意味着每次推送都会立即对所有用户生效。
 
 ## 开发
