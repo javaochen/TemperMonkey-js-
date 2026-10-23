@@ -1,13 +1,13 @@
 // ==UserScript==
 // @name         最新问题→标签页标题
 // @namespace    http://tampermonkey.net/
-// @version      1.0.1
+// @version      1.1.0
 // @description  在 chatMode=temp 的 AI 对话界面，把用户最新问题提取为页面标题
 // @homepageURL  https://github.com/javaochen/js.Tampermonkey
 // @supportURL   https://github.com/javaochen/js.Tampermonkey/issues
 // @downloadURL  https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/tab-title.user.js
 // @updateURL    https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/tab-title.user.js
-// @match        *://yuanbao.tencent.com/*chatMode=temp*
+// @include      *://yuanbao.tencent.com/*chatMode=temp*
 // @grant        none
 // @run-at       document-idle
 // @noframes
@@ -16,61 +16,131 @@
 (function () {
   'use strict';
 
-  // 👇👇👇 改成你页面上"用户消息"对应的选择器
-  // 常见写法举例：
-  //   元宝: '[class*="user-message"]'  或  '.question-content'
-  //   ChatGPT: '[data-message-author-role="user"]'
-  //   DeepSeek: '.user-message'
-  //   MiniMax: 左侧对话区域里的用户 bubble
+  // 站点改版时只需要改这里
   const USER_MSG_SELECTOR = '.hyc-content-text';
-  // 👆👆👆
+  const MAX_TITLE_LEN = 40;
+  const DEBOUNCE_MS = 400;
+  const ENSURE_MS = 2000;   // 只比较 document.title，不查询 DOM
 
-  const MAX_TITLE_LEN = 40;            // 标题最长字符数，超出截断
-  let debounceTimer = null;
-  let lastTitle = '';
+  let wanted = '';          // 当前要显示的标题（空 = 不覆盖）
+  let siteTitle = document.title;
+  let debounceTimer = 0;
+  let lastNode = null;
+  let lastRaw = '';
 
-  // 1. 提取"最新一条"用户问题
-  function getLatestUserQuestion() {
+  /** 读取最后一条用户消息，内容未变化时直接复用缓存 */
+  function latestQuestion() {
     const nodes = document.querySelectorAll(USER_MSG_SELECTOR);
-    if (!nodes.length) return '';
-    // 取最后一条 = 最新问题
-    const last = nodes[nodes.length - 1];
-    let text = (last.innerText || last.textContent || '').trim();
-    // 清理换行、多余空格
-    text = text.replace(/\s+/g, ' ').trim();
-    // 截断
-    if (text.length > MAX_TITLE_LEN) {
-      text = text.slice(0, MAX_TITLE_LEN) + '…';
+    const last = nodes.length ? nodes[nodes.length - 1] : null;
+
+    if (last !== lastNode) {
+      lastNode = last;
+      lastRaw = last ? (last.textContent || '') : '';
+    } else if (last) {
+      const current = last.textContent || '';
+      if (current !== lastRaw) lastRaw = current;
     }
+
+    let text = lastRaw.replace(/\s+/g, ' ').trim();
+    if (!text) return '';
+    if (text.length > MAX_TITLE_LEN) text = text.slice(0, MAX_TITLE_LEN) + '…';
     return text;
   }
 
-  // 2. 同步到 document.title
-  function syncTitle() {
-    const q = getLatestUserQuestion();
-    if (q && q !== lastTitle) {
-      lastTitle = q;
-      document.title = q;
-      console.log('[最新问题→标题]', q);
+  function applyTitle() {
+    const question = latestQuestion();
+
+    if (question) {
+      if (question !== wanted) {
+        // 首次覆盖前记住站点自己的标题，供新会话时恢复
+        if (!wanted) siteTitle = document.title;
+        wanted = question;
+      }
+      if (document.title !== wanted) document.title = wanted;
+      return;
+    }
+
+    // 没有用户消息（新会话/空对话）→ 还原站点标题
+    if (wanted) {
+      wanted = '';
+      if (document.title !== siteTitle) document.title = siteTitle;
     }
   }
 
-  // 3. 防抖执行（避免 MutationObserver 高频触发）
-  function scheduleSync() {
-    if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(syncTitle, 300);
+  function schedule() {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(applyTitle, DEBOUNCE_MS);
   }
 
-  // 4. 监听整个 body 的变化（AI 页面大多是 SPA，动态渲染）
-  const observer = new MutationObserver(scheduleSync);
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    characterData: true
-  });
+  /** 站点可能自己改标题：记住它，再把问题压回去 */
+  function watchTitle() {
+    const titleEl = document.querySelector('title');
+    if (!titleEl) return;
 
-  // 5. 首次运行 + 定时兜底（防止 observer 漏掉特殊情况）
-  setTimeout(syncTitle, 1000);
-  setInterval(syncTitle, 3000);
+    new MutationObserver(() => {
+      if (!wanted) {
+        siteTitle = document.title;
+        return;
+      }
+      if (document.title !== wanted) {
+        siteTitle = document.title;
+        document.title = wanted;
+      }
+    }).observe(titleEl, { childList: true, characterData: true, subtree: true });
+  }
 
+  // 只订阅结构变化：AI 流式输出是 characterData，订阅它会让回调疯狂触发
+  if (document.body) {
+    new MutationObserver(schedule).observe(document.body, {
+      childList: true,
+      subtree: true,
+    });
+  }
+
+  // 兜底：站点在别处改了标题时压回去，但不做 DOM 查询
+  setInterval(() => {
+    if (wanted && document.title !== wanted) document.title = wanted;
+  }, ENSURE_MS);
+
+  /* ---- SPA 路由：新会话时恢复标题 ---- */
+  let lastUrl = location.href;
+
+  function onNavigate() {
+    if (location.href === lastUrl) return;
+    lastUrl = location.href;
+
+    if (wanted) {
+      wanted = '';
+      if (document.title !== siteTitle) document.title = siteTitle;
+    }
+    lastNode = null;
+    lastRaw = '';
+    schedule();
+  }
+
+  const HISTORY_HOOK = '__tab_title_history_hook';
+  const HISTORY_PATCHED = '__tab_title_history_patched';
+  history[HISTORY_HOOK] = onNavigate;
+  if (!history[HISTORY_PATCHED]) {
+    history[HISTORY_PATCHED] = true;
+    ['pushState', 'replaceState'].forEach((method) => {
+      const original = history[method];
+      history[method] = function (...args) {
+        const result = original.apply(this, args);
+        queueMicrotask(() => {
+          const hook = history[HISTORY_HOOK];
+          if (typeof hook === 'function') hook();
+        });
+        return result;
+      };
+    });
+  }
+  window.addEventListener('popstate', onNavigate);
+  if (window.navigation && typeof window.navigation.addEventListener === 'function') {
+    window.navigation.addEventListener('navigatesuccess', onNavigate);
+  }
+
+  watchTitle();
+  schedule();
+  setTimeout(applyTitle, 1200);   // 首屏渲染较慢时的兜底
 })();
