@@ -4,8 +4,8 @@
 
 | 脚本 | 安装 | 版本 | 适用站点 |
 |---|---|---|---|
-| 网页悬浮目录 | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/toc.user.js) | 4.2.0 | 所有网页 |
-| AI Switcher | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/ai-switcher.user.js) | 1.4.2 | ChatGPT、Claude、Gemini、DeepSeek、元宝、豆包、Kimi、千问、Qwen、ChatGLM、Grok、讯飞星火、Copilot、秘塔 |
+| 网页悬浮目录 | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/toc.user.js) | 4.3.0 | 所有网页 |
+| AI Switcher | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/ai-switcher.user.js) | 1.4.3 | ChatGPT、Claude、Gemini、DeepSeek、元宝、豆包、Kimi、千问、Qwen、ChatGLM、Grok、讯飞星火、Copilot、秘塔 |
 | 最新问题→标签页标题 | [安装](https://raw.githubusercontent.com/javaochen/js.Tampermonkey/main/tab-title.user.js) | 1.1.0 | 元宝 `chatMode=temp` 对话页 |
 
 ## 功能速览
@@ -31,6 +31,24 @@
 - 标题脚本目前只适配元宝的 `chatMode=temp` 页面，且依赖站点的用户消息选择器；站点改版后需要更新选择器。
 - 标题脚本使用 `@include` 而不是 `@match` 匹配 `chatMode=temp`，因为 Chrome 风格的 match 模式不匹配查询串。
 - `raw` 主分支链接意味着每次推送都会立即对所有用户生效。
+
+## 接入新脚本（外部生成后整理）
+
+这里的脚本经常先在别处生成，再拿过来优化。合入前按顺序过一遍，能避免大部分“装两遍”“更新失效”“某站点报错”的问题：
+
+1. **先查重**：搜索同名或同功能脚本。旧版本放进 `legacy/`，命名为 `<slug>-v<version>.user.js.txt`，不要留在根目录。
+2. **文件名**：小写 ASCII，`<slug>.user.js`（不要空格、中文、箭头）。
+3. **metadata**：补齐 `@homepageURL`、`@supportURL`、`@downloadURL`、`@updateURL`（指向本文件）和 `@noframes`；`@name` / `@namespace` 一旦发布就不要再改，否则 TM 会当成新脚本。
+4. **删除占位内容**：示例域名（`your-ai-site.com`）、示例选择器、调试日志。
+5. **语法检查**：`node --check <file>`。
+6. **常见坑**：
+   - `innerHTML` 在开启 Trusted Types 的站点（ChatGPT、Gemini 等）会抛错 → 用 DOM API。
+   - 注入 `<style>` 可能被 CSP 拦截 → 优先 `adoptedStyleSheets`，失败再回退。
+   - `@match` 不匹配查询串 → 需要匹配 `?key=value` 时改用 `@include`。
+   - 快捷键用 `e.key` 在 macOS 上会被 Option 组合键改写（`Option+1` 是 `¡`）→ 用 `e.code`。
+   - 监听整个 `body` 的 `characterData` 会被 AI 流式输出打爆 → 只订阅 `childList`，或缩小观察范围。
+   - 监听全文档 `MutationObserver` 只为检测 URL 变化 → 改用 `pushState` / `replaceState` / `popstate` 钩子。
+7. **版本与文档**：按 patch/minor 递增 `@version`，同步更新上面的版本表。
 
 ## 开发
 
