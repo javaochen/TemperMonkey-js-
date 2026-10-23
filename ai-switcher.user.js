@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         AI Switcher · 多厂家 AI 一键切换栏
 // @namespace    https://github.com/ai-switcher
-// @version      1.4.2
+// @version      1.4.3
 // @description  在 AI 聊天页面显示可拖动、可排序的多厂家 AI 快捷图标，点击即在当前标签页切换到该 AI（Ctrl/中键则新标签打开）。支持自定义厂家、快捷键、位置记忆。已兼容 Trusted Types / 严格 CSP（ChatGPT、Gemini 等）。
 // @author       javaochen
 // @homepageURL  https://github.com/javaochen/js.Tampermonkey
@@ -75,7 +75,7 @@
     // ↓ 默认不启用，在 ⚙ 设置里勾选即可出现
     { id: 'claude',    name: 'Claude',   short: 'Cl',   color: '#d97757', url: 'https://claude.ai/new',          hosts: ['claude.ai'],                        on: false },
     { id: 'glm',       name: '智谱清言', short: 'GLM',  color: '#3b6cff', url: 'https://chatglm.cn/',            hosts: ['chatglm.cn', 'bigmodel.cn'],       on: false },
-    { id: 'grok',      name: 'Grok',     short: 'X',    color: '#111827', url: 'https://grok.com/',              hosts: ['grok.com', 'x.com'],                on: false },
+    { id: 'grok',      name: 'Grok',     short: 'X',    color: '#111827', url: 'https://grok.com/',              hosts: ['grok.com'],                         on: false },
     { id: 'xinghuo',   name: '讯飞星火', short: '火',   color: '#ff7a00', url: 'https://xinghuo.xfyun.cn/',      hosts: ['xinghuo.xfyun.cn'],                 on: false },
     { id: 'copilot',   name: 'Copilot',  short: 'Co',   color: '#0078d4', url: 'https://copilot.microsoft.com/', hosts: ['copilot.microsoft.com'],            on: false },
     { id: 'qwenai',    name: 'Qwen Chat',short: 'Qw',   color: '#7c3aed', url: 'https://chat.qwen.ai/',          hosts: ['chat.qwen.ai'],                     on: false }
@@ -476,14 +476,46 @@
     }
   }
 
+  // 已知站点的输入框优先选择器；命中失败时回退到通用扫描
+  const INPUT_SELECTORS = {
+    'chatgpt.com': ['#prompt-textarea', 'div[contenteditable="true"]'],
+    'chat.openai.com': ['#prompt-textarea', 'div[contenteditable="true"]'],
+    'gemini.google.com': ['rich-textarea .ql-editor', '.ql-editor'],
+    'claude.ai': ['div[contenteditable="true"]'],
+    'kimi.com': ['div[contenteditable="true"]'],
+    'chat.deepseek.com': ['textarea'],
+    'yuanbao.tencent.com': ['div[contenteditable="true"]', 'textarea'],
+    'doubao.com': ['div[contenteditable="true"]', 'textarea'],
+  };
+
+  function firstVisible(selectors) {
+    for (const selector of selectors) {
+      for (const node of document.querySelectorAll(selector)) {
+        if (node.getClientRects().length) return node;
+      }
+    }
+    return null;
+  }
+
   function focusInput() {
     try {
-      const nodes = Array.prototype.filter.call(
-        document.querySelectorAll('textarea, div[contenteditable="true"], input[type="text"]'),
-        n => n.offsetParent !== null
-      );
-      const t = nodes.find(n => n.tagName === 'TEXTAREA') || nodes[0];
-      if (t) t.focus();
+      const host = location.hostname.replace(/^www\./, '');
+      const target = firstVisible(INPUT_SELECTORS[host] || [])
+        || firstVisible(['textarea', 'div[contenteditable="true"]', 'input[type="text"]']);
+      if (!target) return;
+
+      target.focus();
+      if (target.isContentEditable && window.getSelection) {
+        const range = document.createRange();
+        range.selectNodeContents(target);
+        range.collapse(false);
+        const selection = window.getSelection();
+        selection.removeAllRanges();
+        selection.addRange(range);
+      } else if (typeof target.setSelectionRange === 'function') {
+        const end = target.value.length;
+        target.setSelectionRange(end, end);
+      }
     } catch (e) { /* 忽略 */ }
   }
 
